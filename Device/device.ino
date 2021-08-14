@@ -133,10 +133,22 @@ static void MessageCallback(const char* payLoad, int size)
 {
   Serial.println("Message callback:");
   Serial.println(payLoad);
+  const char* action;
+  int chatId;
+  StaticJsonDocument<200> messageProperties;
+  DeserializationError error = deserializeJson(messageProperties, payLoad);
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("Message deserialization failed:"));
+    Serial.println(error.f_str());
+    return;
+  }
+  chatId = messageProperties["ChatID"];
+  action = messageProperties["Action"];
 
-   if (strcmp(payLoad, "takephoto") == 0)
+   if (strcmp(action, "takephoto") == 0)
   {
-    sendPhotoTelegram();
+    sendPhotoTelegram(chatId);
   }
 }
 void loop() {

@@ -1,12 +1,12 @@
 #include <UniversalTelegramBot.h>
 
 // Initialize Telegram BOT
-String chatId = "587564160";
+//String chatId = "587564160";
 String BOTtoken = "1219467580:AAGwWJRdAeMS_EdY4Z2hp02EmzMtDY4nv_k";
 WiFiClientSecure clientTCP;
 UniversalTelegramBot bot(BOTtoken, clientTCP);
 
-String sendPhotoTelegram(){
+String sendPhotoTelegram(int chatId){
   const char* myDomain = "api.telegram.org";
   String getAll = "";
   String getBody = "";
@@ -25,7 +25,7 @@ String sendPhotoTelegram(){
   if (clientTCP.connect(myDomain, 443)) {
     Serial.println("Connection successful");
     
-    String head = "--RandomNerdTutorials\r\nContent-Disposition: form-data; name=\"chat_id\"; \r\n\r\n" + chatId + "\r\n--RandomNerdTutorials\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"esp32-cam.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n";
+    String head = "--RandomNerdTutorials\r\nContent-Disposition: form-data; name=\"chat_id\"; \r\n\r\n" + String(chatId) + "\r\n--RandomNerdTutorials\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"esp32-cam.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n";
     String tail = "\r\n--RandomNerdTutorials--\r\n";
 
     uint16_t imageLen = fb->len;
