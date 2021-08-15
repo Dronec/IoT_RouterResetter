@@ -11,6 +11,9 @@ String sendPhotoTelegram(int chatId){
   String getAll = "";
   String getBody = "";
 
+  Blink(true);
+  delay(500);
+  
   camera_fb_t * fb = NULL;
   fb = esp_camera_fb_get();  
   if(!fb) {
@@ -20,6 +23,8 @@ String sendPhotoTelegram(int chatId){
     return "Camera capture failed";
   }  
   
+  Blink(false);
+
   Serial.println("Connect to " + String(myDomain));
 
   if (clientTCP.connect(myDomain, 443)) {
@@ -63,7 +68,7 @@ String sendPhotoTelegram(int chatId){
     
     while ((startTimer + waitTime) > millis()){
       Serial.print(".");
-      delay(100);      
+      delay(200);     
       while (clientTCP.available()) {
         char c = clientTCP.read();
         if (state==true) getBody += String(c);        
