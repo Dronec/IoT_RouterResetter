@@ -2,7 +2,6 @@
 #include "img_converters.h"
 #include "Arduino.h"
 #include "fb_gfx.h"
-#include "esp_http_server.h"
 #include "Esp32MQTTClient.h"
 
 // Local includes
