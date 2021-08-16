@@ -1,10 +1,20 @@
 #include <UniversalTelegramBot.h>
+#define TelegramAdminID 587564160
 
 // Initialize Telegram BOT
-//String chatId = "587564160";
 String BOTtoken = "1219467580:AAGwWJRdAeMS_EdY4Z2hp02EmzMtDY4nv_k";
 WiFiClientSecure clientTCP;
 UniversalTelegramBot bot(BOTtoken, clientTCP);
+
+void SendMessageTelegramAdmin(String message)
+{
+   bot.sendMessage(String(TelegramAdminID), message, "MarkdownV2");
+}
+
+void SendMessageTelegram(int chat_id, String message)
+{
+  bot.sendMessage(String(chat_id), message, "MarkdownV2");
+}
 
 String sendPhotoTelegram(int chatId){
   const char* myDomain = "api.telegram.org";
@@ -68,7 +78,7 @@ String sendPhotoTelegram(int chatId){
     
     while ((startTimer + waitTime) > millis()){
       Serial.print(".");
-      delay(200);     
+      delay(100);     
       while (clientTCP.available()) {
         char c = clientTCP.read();
         if (state==true) getBody += String(c);        

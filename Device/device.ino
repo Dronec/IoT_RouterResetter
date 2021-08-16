@@ -6,26 +6,28 @@
 
 // Local includes
 #include "./libraries/Blink.h"
+#include "./libraries/Network.h"
 #include "./libraries/httpcameraserver.h"
 #include "./libraries/camera.h"
-#include "./libraries/Network.h"
 
 static const char* connectionString = "HostName=myiothubkirrawee.azure-devices.net;DeviceId=SecurityCamera_Home;SharedAccessKey=DtZXV/1GUT8MK9HbNZyenVKgbrA/3J9vzg0TGxLUvLU=";
 
 static bool hasIoTHub = false;
 static bool hasWiFi = false;
+static bool webserverOn = false;
+static bool motionSensorOn = true;
+
 String sendPhotoTelegram();
 
 //motion sensor
   #define KEY_PIN       3
 //
-  #define TelegramAdminID 587564160
-
 void setup() {
   
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   // Inits
+
   BlinkInit();
   CameraInit();
 
@@ -50,7 +52,8 @@ if (!Esp32MQTTClient_Init((const uint8_t*)connectionString, true))
   Serial.print(WiFi.localIP());
   
   // Start streaming web server
-  startCameraServer();
+  if (webserverOn)
+    startCameraServer();
 }
 static void MessageCallback(const char* payLoad, int size)
 {
@@ -69,16 +72,119 @@ static void MessageCallback(const char* payLoad, int size)
   chatId = messageProperties["ChatID"];
   action = messageProperties["Action"];
 
-   if (strcmp(action, "takephoto") == 0)
+  if (strcmp(action, "status") == 0)
+  {
+    CheckUptime(chatId);
+    CheckWebServer(chatId, false);
+    CheckMotionSensor(chatId);
+  }
+  if (strcmp(action, "websrv") == 0)
+  {
+    webserverOn = !webserverOn;
+    CheckWebServer(chatId, true);
+  }
+  if (strcmp(action, "msensor") == 0)
+  {
+    motionSensorOn = !motionSensorOn;
+    CheckMotionSensor(chatId);
+  }
+   if (strcmp(action, "photo") == 0)
   {
     sendPhotoTelegram(chatId);
   }
 }
+void CheckMotionSensor(int chatId)
+{
+  String onoff;
+  if (motionSensorOn)
+    {
+      onoff = "enabled";
+    }
+    else
+    {
+      onoff = "disabled";
+    }
+    String message = "*Motion sensor:* " + onoff;
+    SendMessageTelegram(chatId, message);
+}
+void CheckWebServer(int chatId, bool act)
+{
+  String onoff;
+  if (webserverOn)
+      {
+        if (act)
+          startCameraServer();
+        onoff = "started";
+      }
+      else
+      {
+        if (act)
+          stopCameraServer();
+        onoff = "stopped";
+      }
+  String message = "*Streaming:* " + onoff;
+  SendMessageTelegram(chatId, message);
+}
+void CheckUptime(int chatId)
+{
+char timestring[25]; // for output
+sprintf(timestring,"*Uptime:* %d min;", esp_timer_get_time()/60000000);
+SendMessageTelegram(chatId, String(timestring));
+}
+/*
+static void DeviceTwinCallback(DEVICE_TWIN_UPDATE_STATE updateState, const unsigned char *payLoad, int size)
+{
+  Serial.println("Twin payload received:");
+  Serial.println((const char*)payLoad);
+
+  StaticJsonDocument<200> twinProperties;
+  DeserializationError error = deserializeJson(twinProperties, payLoad);
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("Twin deserialization failed:"));
+    Serial.println(error.f_str());
+    return;
+  }
+  bool webserverOnNew;
+  bool motionSensorOnNew;
+  webserverOnNew = twinProperties["desired"]["webserverOn"];
+  if ((!webserverOn) && (webserverOnNew))
+    {
+      webserverOn = webserverOnNew;
+      startCameraServer();
+      SendMessageTelegramAdmin("*Streaming server started*");
+    }
+  else
+  if ((webserverOn) && (!webserverOnNew))
+    {
+      webserverOn = webserverOnNew;
+      stopCameraServer();
+      SendMessageTelegramAdmin("*Streaming server stopped*");
+    }
+
+  motionSensorOnNew = twinProperties["desired"]["motionSensorOn"];
+
+  if ((!motionSensorOn) && (motionSensorOnNew))
+    {
+      motionSensorOn = motionSensorOnNew;
+      SendMessageTelegramAdmin("*Motion sensor enabled*");
+    }
+  else
+  if ((motionSensorOn) && (!motionSensorOnNew))
+    {
+      motionSensorOn = motionSensorOnNew;
+      SendMessageTelegramAdmin("*Motion sensor disabled*");
+    }
+}
+*/
 void loop() {
+
   Esp32MQTTClient_Check();
-   if(digitalRead(KEY_PIN)==LOW)
+  
+  if((motionSensorOn && digitalRead(KEY_PIN)==LOW))
   {
     Serial.print(F("Motion detected!"));
+    SendMessageTelegramAdmin("*Motion detected*");
     sendPhotoTelegram(TelegramAdminID);
     while(digitalRead(KEY_PIN)==LOW);
   }
