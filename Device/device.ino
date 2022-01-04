@@ -1,192 +1,175 @@
-#include "esp_timer.h"
-#include "img_converters.h"
-#include "Arduino.h"
-#include "fb_gfx.h"
-#include "Esp32MQTTClient.h"
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include <ESPAsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include "LittleFS.h"
+#include <AsyncElegantOTA.h>
 
-// Local includes
-#include "./libraries/Blink.h"
-#include "./libraries/Network.h"
-#include "./libraries/httpcameraserver.h"
-#include "./libraries/camera.h"
+const char *ssid = "ssid";
+const char *password = "password";
 
-static const char* connectionString = "HostName=myiothubkirrawee.azure-devices.net;DeviceId=SecurityCamera_Home;SharedAccessKey=DtZXV/1GUT8MK9HbNZyenVKgbrA/3J9vzg0TGxLUvLU=";
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
 
-static bool hasIoTHub = false;
-static bool hasWiFi = false;
-static bool webserverOn = false;
-static bool motionSensorOn = true;
+// Hex command to send to serial for close relay
+// Hex command to send to serial for close relay
+byte relON[] = {0xA0, 0x01, 0x01, 0xA2};
 
-String sendPhotoTelegram();
+// Hex command to send to serial for open relay
+byte relOFF[] = {0xA0, 0x01, 0x00, 0xA1};
 
-//motion sensor
-  #define KEY_PIN       3
-//
-void setup() {
-  
-  Serial.begin(115200);
-  Serial.setDebugOutput(true);
-  // Inits
+// Hex command to send to serial for close relay
+byte rel2ON[] = {0xA0, 0x02, 0x01, 0xA3};
 
-  BlinkInit();
-  CameraInit();
+// Hex command to send to serial for open relay
+byte rel2OFF[] = {0xA0, 0x02, 0x00, 0xA2};
 
-  hasWiFi = WiFiInit();
-  
-if (!Esp32MQTTClient_Init((const uint8_t*)connectionString, true))
-  {
-    hasIoTHub = false;
-    Serial.println("Initializing IoT hub failed.");
-  }
-  else
-  {
-    hasIoTHub = true;
-    //Esp32MQTTClient_SetSendConfirmationCallback(SendConfirmationCallback);
-    Esp32MQTTClient_SetMessageCallback(MessageCallback);
-    //Esp32MQTTClient_SetDeviceTwinCallback(DeviceTwinCallback);
-    //Esp32MQTTClient_SetDeviceMethodCallback(DeviceMethodCallback);
-    Serial.println("Start sending events.");
-  }
+bool pp1Enabled = true;
+bool pp2Enabled = true;
 
-  Serial.print("Camera Stream Ready! Go to: http://");
-  Serial.print(WiFi.localIP());
-  
-  // Start streaming web server
-  if (webserverOn)
-    startCameraServer();
-}
-static void MessageCallback(const char* payLoad, int size)
+// Initialize LittleFS
+void initLittleFS()
 {
-  Serial.println("Message callback:");
-  Serial.println(payLoad);
-  const char* action;
-  int chatId;
-  StaticJsonDocument<200> messageProperties;
-  DeserializationError error = deserializeJson(messageProperties, payLoad);
-  // Test if parsing succeeds.
-  if (error) {
-    Serial.print(F("Message deserialization failed:"));
-    Serial.println(error.f_str());
-    return;
-  }
-  chatId = messageProperties["ChatID"];
-  action = messageProperties["Action"];
-
-  if (strcmp(action, "status") == 0)
+  if (!LittleFS.begin())
   {
-    CheckUptime(chatId);
-    CheckWebServer(chatId, false);
-    CheckMotionSensor(chatId);
+    Serial.println("An error has occurred while mounting LittleFS");
   }
-  if (strcmp(action, "websrv") == 0)
-  {
-    webserverOn = !webserverOn;
-    CheckWebServer(chatId, true);
-  }
-  if (strcmp(action, "msensor") == 0)
-  {
-    motionSensorOn = !motionSensorOn;
-    CheckMotionSensor(chatId);
-  }
-   if (strcmp(action, "photo") == 0)
-  {
-    sendPhotoTelegram(chatId);
-  }
+  Serial.println("LittleFS mounted successfully");
 }
-void CheckMotionSensor(int chatId)
+
+void notifyClients(String state)
 {
-  String onoff;
-  if (motionSensorOn)
+  ws.textAll(state);
+}
+
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
+{
+  AwsFrameInfo *info = (AwsFrameInfo *)arg;
+  if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT)
+  {
+    data[len] = 0;
+    int relay = atoi((char *)data);
+    if (relay == 1)
     {
-      onoff = "enabled";
+      pp1Enabled = !pp1Enabled;
+      if (pp1Enabled)
+        Serial.write(relOFF, sizeof(relOFF));
+      else
+        Serial.write(relON, sizeof(relON));
+    }
+    if (relay == 2)
+    {
+      pp2Enabled = !pp2Enabled;
+      if (pp2Enabled)
+        Serial.write(rel2OFF, sizeof(rel2OFF));
+      else
+        Serial.write(rel2ON, sizeof(rel2ON));
+    }
+  }
+}
+
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
+             void *arg, uint8_t *data, size_t len)
+{
+  switch (type)
+  {
+  case WS_EVT_CONNECT:
+    Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+    break;
+  case WS_EVT_DISCONNECT:
+    Serial.printf("WebSocket client #%u disconnected\n", client->id());
+    break;
+  case WS_EVT_DATA:
+    handleWebSocketMessage(arg, data, len);
+    break;
+  case WS_EVT_PONG:
+  case WS_EVT_ERROR:
+    break;
+  }
+}
+
+void initWebSocket()
+{
+  ws.onEvent(onEvent);
+  server.addHandler(&ws);
+}
+
+void setup()
+{
+  delay(10);
+  Serial.begin(115200);
+
+  WiFi.begin(ssid, password);
+
+  initLittleFS();
+  initWebSocket();
+
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(LittleFS, "/index.html", "text/html", false); });
+
+  server.serveStatic("/", LittleFS, "/");
+
+  // Start ElegantOTA
+  AsyncElegantOTA.begin(&server);
+
+  // Start server
+  server.begin();
+}
+
+void loop()
+{
+  // int val;
+  /*
+    // Check if a client has connected
+    WiFiClient client = server.available();
+    if (!client)
+    {
+      return;
+    }
+
+    // Wait until the client sends some data
+    while (!client.available())
+    {
+      delay(100);
+    }
+
+    // Read the first line of the request
+    String req = client.readStringUntil('\r');
+    client.flush();
+
+    // Match the request
+    if (req.indexOf("/1/on") != -1)
+    {
+      Serial.write(relON, sizeof(relON));
+      val = 1; // if you want feedback see below
+    }
+    else if (req.indexOf("/1/off") != -1)
+    {
+      Serial.write(relOFF, sizeof(relOFF));
+      val = 0; // if you want feedback
+    }
+    else if (req.indexOf("/2/on") != -1)
+    {
+      Serial.write(rel2ON, sizeof(rel2ON));
+      val = 1; // if you want feedback see below
     }
     else
     {
-      onoff = "disabled";
-    }
-    String message = "*Motion sensor:* " + onoff;
-    SendMessageTelegram(chatId, message);
-}
-void CheckWebServer(int chatId, bool act)
-{
-  String onoff;
-  if (webserverOn)
-      {
-        if (act)
-          startCameraServer();
-        onoff = "started";
-      }
-      else
-      {
-        if (act)
-          stopCameraServer();
-        onoff = "stopped";
-      }
-  String message = "*Streaming:* " + onoff;
-  SendMessageTelegram(chatId, message);
-}
-void CheckUptime(int chatId)
-{
-char timestring[25]; // for output
-sprintf(timestring,"*Uptime:* %d min;", esp_timer_get_time()/60000000);
-SendMessageTelegram(chatId, String(timestring));
-}
-/*
-static void DeviceTwinCallback(DEVICE_TWIN_UPDATE_STATE updateState, const unsigned char *payLoad, int size)
-{
-  Serial.println("Twin payload received:");
-  Serial.println((const char*)payLoad);
-
-  StaticJsonDocument<200> twinProperties;
-  DeserializationError error = deserializeJson(twinProperties, payLoad);
-  // Test if parsing succeeds.
-  if (error) {
-    Serial.print(F("Twin deserialization failed:"));
-    Serial.println(error.f_str());
-    return;
-  }
-  bool webserverOnNew;
-  bool motionSensorOnNew;
-  webserverOnNew = twinProperties["desired"]["webserverOn"];
-  if ((!webserverOn) && (webserverOnNew))
-    {
-      webserverOn = webserverOnNew;
-      startCameraServer();
-      SendMessageTelegramAdmin("*Streaming server started*");
-    }
-  else
-  if ((webserverOn) && (!webserverOnNew))
-    {
-      webserverOn = webserverOnNew;
-      stopCameraServer();
-      SendMessageTelegramAdmin("*Streaming server stopped*");
+      if (req.indexOf("/2/off") != -1)
+        Serial.write(rel2OFF, sizeof(rel2OFF));
+      val = 0; // if you want feedback
     }
 
-  motionSensorOnNew = twinProperties["desired"]["motionSensorOn"];
+    client.flush();
 
-  if ((!motionSensorOn) && (motionSensorOnNew))
-    {
-      motionSensorOn = motionSensorOnNew;
-      SendMessageTelegramAdmin("*Motion sensor enabled*");
-    }
-  else
-  if ((motionSensorOn) && (!motionSensorOnNew))
-    {
-      motionSensorOn = motionSensorOnNew;
-      SendMessageTelegramAdmin("*Motion sensor disabled*");
-    }
-}
-*/
-void loop() {
+    // only if you want feedback - see above
+    // Prepare the response
+    String s = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>\r\nRelay is now ";
+    s += (val) ? "on" : "off";
+    s += "</html>\n";
 
-  Esp32MQTTClient_Check();
-  
-  if((motionSensorOn && digitalRead(KEY_PIN)==LOW))
-  {
-    Serial.print(F("Motion detected!"));
-    SendMessageTelegramAdmin("*Motion detected*");
-    sendPhotoTelegram(TelegramAdminID);
-    while(digitalRead(KEY_PIN)==LOW);
-  }
-  delay(1000);
+    // Send the response to the client
+    client.print(s);*/
+  // delay(10000);
 }
