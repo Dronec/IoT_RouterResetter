@@ -5,6 +5,9 @@
 #include "LittleFS.h"
 #include <AsyncElegantOTA.h>
 
+#define NoRebootTime 600000  // 10 min no reboot
+#define DefaultOffTime 10000 // 10 sec off time
+
 const char *ssid = "ssid";
 const char *password = "password";
 
@@ -13,10 +16,10 @@ AsyncWebSocket ws("/ws");
 
 // Hex command to send to serial for close relay
 // Hex command to send to serial for close relay
-byte relON[] = {0xA0, 0x01, 0x01, 0xA2};
+byte rel1ON[] = {0xA0, 0x01, 0x01, 0xA2};
 
 // Hex command to send to serial for open relay
-byte relOFF[] = {0xA0, 0x01, 0x00, 0xA1};
+byte rel1OFF[] = {0xA0, 0x01, 0x00, 0xA1};
 
 // Hex command to send to serial for close relay
 byte rel2ON[] = {0xA0, 0x02, 0x01, 0xA3};
@@ -27,6 +30,9 @@ byte rel2OFF[] = {0xA0, 0x02, 0x00, 0xA2};
 bool pp1Enabled = true;
 bool pp2Enabled = true;
 
+unsigned long timer = 0;
+unsigned long pp1offtime = 0;
+unsigned long pp2offtime = 0;
 // Initialize LittleFS
 void initLittleFS()
 {
@@ -37,9 +43,36 @@ void initLittleFS()
   Serial.println("LittleFS mounted successfully");
 }
 
-void notifyClients(String state)
+void switchRelay(int relay, bool state)
 {
-  ws.textAll(state);
+  if (relay == 1)
+  {
+    if (state)
+    {
+      Serial.write(rel1OFF, sizeof(rel1OFF));
+      pp1offtime = 0;
+    }
+    else
+    {
+      Serial.write(rel1ON, sizeof(rel1ON));
+      pp1offtime = millis();
+    }
+    pp1Enabled = state;
+  }
+  if (relay == 2)
+  {
+    if (state)
+    {
+      Serial.write(rel2OFF, sizeof(rel2OFF));
+      pp2offtime = 0;
+    }
+    else
+    {
+      Serial.write(rel2ON, sizeof(rel2ON));
+      pp2offtime = millis();
+    }
+    pp2Enabled = state;
+  }
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
@@ -50,21 +83,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
     data[len] = 0;
     int relay = atoi((char *)data);
     if (relay == 1)
-    {
-      pp1Enabled = !pp1Enabled;
-      if (pp1Enabled)
-        Serial.write(relOFF, sizeof(relOFF));
-      else
-        Serial.write(relON, sizeof(relON));
-    }
+      switchRelay(relay, !pp1Enabled);
     if (relay == 2)
-    {
-      pp2Enabled = !pp2Enabled;
-      if (pp2Enabled)
-        Serial.write(rel2OFF, sizeof(rel2OFF));
-      else
-        Serial.write(rel2ON, sizeof(rel2ON));
-    }
+      switchRelay(relay, !pp2Enabled);
   }
 }
 
@@ -93,6 +114,19 @@ void initWebSocket()
   ws.onEvent(onEvent);
   server.addHandler(&ws);
 }
+void notifyClients()
+{
+  String state;
+  if (pp1Enabled)
+    state+="0";
+  else
+    state+="1";
+  if (pp2Enabled)
+    state+="0";
+  else
+    state+="1";
+  ws.textAll(state);
+}
 
 void setup()
 {
@@ -115,10 +149,22 @@ void setup()
 
   // Start server
   server.begin();
+  timer = millis();
 }
 
 void loop()
 {
+  if (pp1offtime > 0 && pp1offtime + DefaultOffTime < millis())
+  {
+    switchRelay(1, true);
+  }
+  if (pp2offtime > 0 && pp2offtime + DefaultOffTime < millis())
+  {
+    switchRelay(2, true);
+  }
+  //if (timer + NoRebootTime < millis())
+  //{
+  //}
   // int val;
   /*
     // Check if a client has connected
@@ -171,5 +217,7 @@ void loop()
 
     // Send the response to the client
     client.print(s);*/
-  // delay(10000);
+  ws.cleanupClients();
+  notifyClients();
+  delay(1000);
 }

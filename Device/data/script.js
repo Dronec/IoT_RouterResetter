@@ -11,6 +11,7 @@ function initWebSocket() {
     websocket = new WebSocket(gateway);
     websocket.onopen = onOpen;
     websocket.onclose = onClose;
+    websocket.onmessage = onMessage;
 }
 
 function onOpen(event) {
@@ -23,7 +24,20 @@ function onClose(event) {
     setTimeout(initWebSocket, 2000);
 }
 
-// Send Requests to Control GPIOs
+function onMessage(event) {
+    console.log(event.data);
+    var myObj = event.data;
+    if (myObj[0]=="0")
+        document.getElementById("1").checked = false;
+    else
+        document.getElementById("1").checked = true;
+    if (myObj[1]=="0")
+        document.getElementById("2").checked = false;
+    else
+        document.getElementById("2").checked = true;
+
+}
+
 function toggleCheckbox(element) {
     console.log(element.id);
     websocket.send(element.id);

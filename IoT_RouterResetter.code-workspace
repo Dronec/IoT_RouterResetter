@@ -2,10 +2,6 @@
     "folders": [
         {
             "path": "Device"
-        },
-        {
-            "name": "IoT_RouterResetter",
-            "path": "."
         }
     ],
     "settings": {
