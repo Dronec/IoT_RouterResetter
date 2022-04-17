@@ -15,16 +15,29 @@
         <div class="card">             
             <p class="card-title">Power point 1</p>
             <label class="switch">
-                <input type="checkbox" onchange="toggleCheckbox(this)" id="1">
+                <input type="checkbox" onchange="toggleCheckbox(this)" id="relay1">
                 <span class="slider"></span>
             </label>
         </div>
         <div class="card">
             <p class="card-title">Power point 2</p>
             <label class="switch">
-                <input type="checkbox" onchange="toggleCheckbox(this)" id="2">
+                <input type="checkbox" onchange="toggleCheckbox(this)" id="relay2">
                 <span class="slider"></span>
             </label>
+        </div>
+        <div class="card">
+          <p class="card-title">Stats:</p>
+          <p class="state">Wifi: <span id="ssid"></span></p>
+          <p class="state">Version: <span id="softwareVersion"></span></p>
+          <p class="state">Last error pp#1: <span id="lastErrorpp1"></span></p>
+          <p class="state">Last error pp#2: <span id="lastErrorpp2"></span></p>
+          <p class="state">Free RAM: <span id="ram"></span></p>
+          <p class="state">Uptime, s: <span id="uptime"></span></p>
+        </div>
+        <div class="card">
+          <p class="card-title">Commands</p>
+          <button id="0" onClick="runCommand(this)">Reset device</button>
         </div>
     </div>
 </div>

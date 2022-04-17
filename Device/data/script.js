@@ -25,20 +25,40 @@ function onClose(event) {
 }
 
 function onMessage(event) {
-    console.log(event.data);
-    var myObj = event.data;
-    if (myObj[0]=="0")
-        document.getElementById("1").checked = false;
-    else
-        document.getElementById("1").checked = true;
-    if (myObj[1]=="0")
-        document.getElementById("2").checked = false;
-    else
-        document.getElementById("2").checked = true;
-
+    var myObj = JSON.parse(event.data);
+    console.log(myObj);
+    // stats
+    stats = myObj["stats"];
+    for (var k in stats) {
+        console.log(k, stats[k]);
+        document.getElementById(k).innerHTML = stats[k];
+    }
+    // values
+    settings = myObj["settings"];
+    for (var k in settings) {
+        console.log(k, settings[k]);
+        document.getElementById(k).value = settings[k];
+    }
+    // checkboxes
+    checkboxes = myObj["checkboxes"];
+    for (var k in checkboxes) {
+        console.log(k, checkboxes[k]);
+        document.getElementById(k).checked = checkboxes[k];
+    }
 }
 
+// Checkboxes
 function toggleCheckbox(element) {
-    console.log(element.id);
-    websocket.send(element.id);
+    console.log('{"' + element.id + '":' + element.checked + '}');
+    websocket.send('{"' + element.id + '":' + element.checked + '}');
+}
+// Settings/values
+function enterValue(element) {
+    console.log('{"' + element.id + '":"' + element.value + '"}');
+    websocket.send('{"' + element.id + '":"' + element.value + '"}');
+}
+// Running commands
+function runCommand(element) {
+    console.log('{"command":"' + element.id + '"}');
+    websocket.send('{"command":"' + element.id + '"}');
 }

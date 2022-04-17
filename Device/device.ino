@@ -6,19 +6,25 @@
 #include <AsyncElegantOTA.h>
 #include <ESP8266HTTPClient.h>
 #include <DefsWiFi.h>
+#include <Arduino_JSON.h>
 
 #define NoResetTime 600000   // 10 min no reset
 #define DefaultOffTime 10000 // 10 sec off time
 
+#define loopDelay 5000 // 5 seconds between loops
+
 #define ToleranceLimit 120000 // 2 min until reboot
 
-const char *ssid = WIFISSID_1;
-const char *password = WIFIPASS_1;
+const char *ssid[2] = {WIFISSID_1, WIFISSID_2};
+const char *password[2] = {WIFIPASS_1, WIFIPASS_2};
+const char *softwareVersion = "0.8";
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
 WiFiEventHandler e1;
+
+int relayNumber = 0;
 
 // Hex command to send to serial for close relay
 // Hex command to send to serial for close relay
@@ -36,11 +42,11 @@ byte rel2OFF[] = {0xA0, 0x02, 0x00, 0xA2};
 bool pp1Enabled = true;
 bool pp2Enabled = true;
 
-unsigned long timer = 0;
+unsigned long timer[] = {0, 0};
 unsigned long pp1offtime = 0;
 unsigned long pp2offtime = 0;
 unsigned long execCount = 0;
-unsigned long lastExternalPingErrorTime = 0;
+unsigned long lastExternalPingErrorTime[] = {0, 0};
 
 HTTPClient http;
 WiFiClient client;
@@ -48,6 +54,21 @@ WiFiClient client;
 void onSTAGotIP(WiFiEventStationModeGotIP ipInfo)
 {
   Serial.printf("Connected: %s\n", WiFi.localIP().toString().c_str());
+}
+
+// Initialize LittleFS
+void initLittleFS()
+{
+  if (!LittleFS.begin())
+  {
+    Serial.println("An error has occurred while mounting LittleFS");
+  }
+  Serial.println("LittleFS mounted successfully");
+}
+
+void initWebServer()
+{
+  Serial.println("Web server initialized.");
   initWebSocket();
 
   // Route for root / web page
@@ -61,16 +82,6 @@ void onSTAGotIP(WiFiEventStationModeGotIP ipInfo)
 
   // Start server
   server.begin();
-}
-
-// Initialize LittleFS
-void initLittleFS()
-{
-  if (!LittleFS.begin())
-  {
-    Serial.println("An error has occurred while mounting LittleFS");
-  }
-  Serial.println("LittleFS mounted successfully");
 }
 
 void switchRelay(int relay, bool state)
@@ -111,11 +122,38 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT)
   {
     data[len] = 0;
-    int relay = atoi((char *)data);
-    if (relay == 1)
-      switchRelay(relay, !pp1Enabled);
-    if (relay == 2)
-      switchRelay(relay, !pp2Enabled);
+    JSONVar webmsg = JSON.parse((char *)data);
+    // values
+    // if (webmsg.hasOwnProperty("currentCamera"))
+    // {
+    //   currentCamera = atoi(webmsg["currentCamera"]);
+    //   EnableCamera(currentCamera);
+    // }
+    // if (webmsg.hasOwnProperty("frontCamTimeout"))
+    //   frontCamTimeout = atoi(webmsg["frontCamTimeout"]);
+    // if (webmsg.hasOwnProperty("serialOutput"))
+    //   serialOutput = atoi(webmsg["serialOutput"]);
+    // if (webmsg.hasOwnProperty("rearCamMode"))
+    //   rearCamMode = atoi(webmsg["rearCamMode"]);
+    // if (webmsg.hasOwnProperty("loopDelay"))
+    //   loopDelay = atoi(webmsg["loopDelay"]);
+    // if (webmsg.hasOwnProperty("canInterface"))
+    //   canInterface = atoi(webmsg["canInterface"]);
+    // if (webmsg.hasOwnProperty("canSpeed"))
+    //   canSpeed = atoi(webmsg["canSpeed"]);
+    // checkboxes
+    if (webmsg.hasOwnProperty("relay1"))
+      switchRelay(1, webmsg["relay1"]);
+    if (webmsg.hasOwnProperty("relay2"))
+      switchRelay(2, webmsg["relay2"]);
+
+    if (webmsg.hasOwnProperty("command"))
+    {
+      int command = atoi(webmsg["command"]);
+      if (command == 0)
+        ESP.restart();
+    }
+    notifyClients(getOutputStates());
   }
 }
 
@@ -144,18 +182,36 @@ void initWebSocket()
   ws.onEvent(onEvent);
   server.addHandler(&ws);
 }
-void notifyClients()
+void notifyClients(String state)
 {
-  String state;
-  if (pp1Enabled)
-    state += "0";
-  else
-    state += "1";
-  if (pp2Enabled)
-    state += "0";
-  else
-    state += "1";
   ws.textAll(state);
+}
+String getOutputStates()
+{
+  JSONVar myArray;
+  // sending stats
+  myArray["stats"]["ssid"] = ssid[relayNumber];
+  myArray["stats"]["softwareVersion"] = softwareVersion;
+  myArray["stats"]["lastErrorpp1"] = lastExternalPingErrorTime[0];
+  myArray["stats"]["lastErrorpp2"] = lastExternalPingErrorTime[1];
+  myArray["stats"]["uptime"] = millis() / 1000;
+  myArray["stats"]["ram"] = (int)ESP.getFreeHeap();
+
+  // // sending values
+  // myArray["settings"]["currentCamera"] = currentCamera;
+  // myArray["settings"]["frontCamTimeout"] = frontCamTimeout;
+  // myArray["settings"]["rearCamMode"] = rearCamMode;
+  // myArray["settings"]["serialOutput"] = serialOutput;
+  // myArray["settings"]["loopDelay"] = loopDelay;
+  // myArray["settings"]["canSpeed"] = canSpeed;
+  // myArray["settings"]["canInterface"] = canInterface;
+
+  // sending checkboxes
+  myArray["checkboxes"]["relay1"] = pp1Enabled;
+  myArray["checkboxes"]["relay2"] = pp2Enabled;
+
+  String jsonString = JSON.stringify(myArray);
+  return jsonString;
 }
 
 void setup()
@@ -163,15 +219,14 @@ void setup()
   delay(10);
   Serial.begin(115200);
 
-  Serial.printf("Connecting to: %s\n",ssid);
-
-  WiFi.begin(ssid, password);
-
   e1 = WiFi.onStationModeGotIP(onSTAGotIP);
-
+  Serial.printf("Connecting to: %s\n", ssid[relayNumber]);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid[relayNumber], password[relayNumber]);
+  delay(DefaultOffTime);
   initLittleFS();
-
-  timer = millis();
+  initWebServer();
+  timer[relayNumber] = millis();
 }
 
 bool CheckInternet()
@@ -211,33 +266,46 @@ void loop()
   {
     switchRelay(2, true);
   }
-  if (timer + NoResetTime < millis())
+
+  if (timer[relayNumber] + NoResetTime < millis())
   {
-    if (lastExternalPingErrorTime > 0 && lastExternalPingErrorTime + ToleranceLimit < millis())
+    if (lastExternalPingErrorTime[relayNumber] > 0 && lastExternalPingErrorTime[relayNumber] + ToleranceLimit < millis())
     {
-      switchRelay(1, false);
-      Serial.println("Resetting Power Point #1");
-      lastExternalPingErrorTime = 0;
-      timer = 0;
+      switchRelay(relayNumber + 1, false);
+      Serial.printf("Resetting Power Point #%d\n", relayNumber + 1);
+      lastExternalPingErrorTime[relayNumber] = 0;
+      timer[relayNumber] = 0;
     }
     ws.cleanupClients();
-    notifyClients();
+    notifyClients(getOutputStates());
 
-    if (execCount % 60 == 0)
+    if (execCount % 12 == 0)
     {
-      if (CheckInternet() && lastExternalPingErrorTime > 0)
+      Serial.printf("Disconnecting from: %s\n", ssid[relayNumber]);
+      WiFi.mode(WIFI_OFF);
+      relayNumber = abs(relayNumber - 1);
+      Serial.printf("Connecting to: %s\n", ssid[relayNumber]);
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(ssid[relayNumber], password[relayNumber]);
+      delay(loopDelay);
+
+      bool checkNow = CheckInternet();
+
+      if (checkNow && lastExternalPingErrorTime[relayNumber] > 0)
       {
-        lastExternalPingErrorTime = 0;
-        Serial.println("Error count reset.");
+        lastExternalPingErrorTime[relayNumber] = 0;
+        Serial.printf("Error count reset for relay #%d.\n", relayNumber + 1);
       }
 
-      if (!CheckInternet() && lastExternalPingErrorTime == 0)
+      if (!checkNow && lastExternalPingErrorTime[relayNumber] == 0)
       {
-        Serial.println("Starting error count...");
-        lastExternalPingErrorTime = millis();
+        Serial.printf("Starting error count for relay #%d...\n", relayNumber + 1);
+        lastExternalPingErrorTime[relayNumber] = millis();
       }
     }
   }
-  delay(1000);
+  if (execCount % 12 != 0)
+    delay(loopDelay);
   execCount++;
+  notifyClients(getOutputStates());
 }
