@@ -156,8 +156,15 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
     if (webmsg.hasOwnProperty("command"))
     {
       int command = atoi(webmsg["command"]);
-      if (command == 0)
+      switch (command)
+      {
+      case 0:
         ESP.restart();
+        break;
+      case 1:
+        timer = timer + checkIncrement * 15;
+        break;
+      }
     }
     notifyClients(getOutputStates());
   }
