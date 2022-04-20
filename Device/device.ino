@@ -41,7 +41,7 @@ bool fsMounted = false;
 
 int fails = 0;
 int reboots = 0;
-unsigned long timeUntilNextCheck;
+
 unsigned long pp1offtime = 0;
 unsigned long pp2offtime = 0;
 unsigned long lastInternetTime;
@@ -225,9 +225,8 @@ String getOutputStates()
 void setup()
 {
   Serial.begin(115200);
-  timeUntilNextCheck = checkIncrement * 5;
   lastInternetTime = 0;
-  timer = millis() + timeUntilNextCheck;
+  timer = millis() + checkIncrement * 5;
   initLittleFS();
   e1 = WiFi.onStationModeGotIP(onSTAGotIP);
   WiFi.begin(ssid, password);
@@ -286,7 +285,7 @@ void loop()
     else
     {
       fails++;
-      timer = millis() + checkIncrement * fails;
+      timer = millis() + checkIncrement * (fails + 2);
     }
 
     if (fails == 2)
