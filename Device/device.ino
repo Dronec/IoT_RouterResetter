@@ -8,23 +8,19 @@
 #include <DefsWiFi.h>
 #include <Arduino_JSON.h>
 
-#define NoResetTime 600000   // 10 min no reset
 #define DefaultOffTime 10000 // 10 sec off time
 
-#define loopDelay 5000 // 5 seconds between loops
+#define loopDelay 1000       // 5 seconds between loops
+#define checkIncrement 60000 // every time internet fails we add 1 minute
 
-#define ToleranceLimit 120000 // 2 min until reboot
-
-const char *ssid[2] = {WIFISSID_1, WIFISSID_2};
-const char *password[2] = {WIFIPASS_1, WIFIPASS_2};
-const char *softwareVersion = "0.8";
+const char *ssid = WIFISSID_2;
+const char *password = WIFIPASS_2;
+const char *softwareVersion = "1.0";
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
 WiFiEventHandler e1;
-
-int relayNumber = 0;
 
 // Hex command to send to serial for close relay
 // Hex command to send to serial for close relay
@@ -41,19 +37,23 @@ byte rel2OFF[] = {0xA0, 0x02, 0x00, 0xA2};
 
 bool pp1Enabled = true;
 bool pp2Enabled = true;
+bool fsMounted = false;
 
-unsigned long timer[] = {0, 0};
+int fails = 0;
+int reboots = 0;
+unsigned long timeUntilNextCheck;
 unsigned long pp1offtime = 0;
 unsigned long pp2offtime = 0;
-unsigned long execCount = 0;
-unsigned long lastExternalPingErrorTime[] = {0, 0};
+unsigned long lastInternetTime;
+unsigned long timer;
 
 HTTPClient http;
 WiFiClient client;
 
 void onSTAGotIP(WiFiEventStationModeGotIP ipInfo)
 {
-  Serial.printf("Connected: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("%d: Connected: %s to %s\n", millis(), WiFi.localIP().toString().c_str(), ssid);
+  initWebServer();
 }
 
 // Initialize LittleFS
@@ -63,7 +63,11 @@ void initLittleFS()
   {
     Serial.println("An error has occurred while mounting LittleFS");
   }
-  Serial.println("LittleFS mounted successfully");
+  else
+  {
+    Serial.println("LittleFS mounted successfully");
+    fsMounted = true;
+  }
 }
 
 void initWebServer()
@@ -97,6 +101,7 @@ void switchRelay(int relay, bool state)
     {
       Serial.write(rel1ON, sizeof(rel1ON));
       pp1offtime = millis();
+      reboots++;
     }
     pp1Enabled = state;
   }
@@ -111,6 +116,7 @@ void switchRelay(int relay, bool state)
     {
       Serial.write(rel2ON, sizeof(rel2ON));
       pp2offtime = millis();
+      reboots++;
     }
     pp2Enabled = state;
   }
@@ -190,10 +196,12 @@ String getOutputStates()
 {
   JSONVar myArray;
   // sending stats
-  myArray["stats"]["ssid"] = ssid[relayNumber];
+  myArray["stats"]["ssid"] = ssid;
   myArray["stats"]["softwareVersion"] = softwareVersion;
-  myArray["stats"]["lastErrorpp1"] = lastExternalPingErrorTime[0];
-  myArray["stats"]["lastErrorpp2"] = lastExternalPingErrorTime[1];
+  myArray["stats"]["lastInternetTime"] = (millis() - lastInternetTime) / 1000;
+  myArray["stats"]["nextCheckIn"] = (timer - millis() + loopDelay) / 1000;
+  myArray["stats"]["fails"] = fails;
+  myArray["stats"]["reboots"] = reboots;
   myArray["stats"]["uptime"] = millis() / 1000;
   myArray["stats"]["ram"] = (int)ESP.getFreeHeap();
 
@@ -216,17 +224,15 @@ String getOutputStates()
 
 void setup()
 {
-  delay(10);
   Serial.begin(115200);
-
-  e1 = WiFi.onStationModeGotIP(onSTAGotIP);
-  Serial.printf("Connecting to: %s\n", ssid[relayNumber]);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid[relayNumber], password[relayNumber]);
-  delay(DefaultOffTime);
+  timeUntilNextCheck = checkIncrement * 5;
+  lastInternetTime = 0;
+  timer = millis() + timeUntilNextCheck;
   initLittleFS();
-  initWebServer();
-  timer[relayNumber] = millis();
+  e1 = WiFi.onStationModeGotIP(onSTAGotIP);
+  WiFi.begin(ssid, password);
+  delay(DefaultOffTime);
+  Serial.printf("%d: Network monitor restarted.\n", millis());
 }
 
 bool CheckInternet()
@@ -258,6 +264,7 @@ bool CheckInternet()
 
 void loop()
 {
+  // this part turns on relays after 10 seconds off
   if (pp1offtime > 0 && pp1offtime + DefaultOffTime < millis())
   {
     switchRelay(1, true);
@@ -266,46 +273,29 @@ void loop()
   {
     switchRelay(2, true);
   }
-
-  if (timer[relayNumber] + NoResetTime < millis())
+  //
+  if (timer < millis())
   {
-    if (lastExternalPingErrorTime[relayNumber] > 0 && lastExternalPingErrorTime[relayNumber] + ToleranceLimit < millis())
+    bool checkNow = CheckInternet();
+    if (checkNow)
     {
-      switchRelay(relayNumber + 1, false);
-      Serial.printf("Resetting Power Point #%d\n", relayNumber + 1);
-      lastExternalPingErrorTime[relayNumber] = 0;
-      timer[relayNumber] = 0;
+      fails = 0;
+      timer = millis() + checkIncrement;
+      lastInternetTime = millis();
     }
-    ws.cleanupClients();
-    notifyClients(getOutputStates());
-
-    if (execCount % 12 == 0)
+    else
     {
-      Serial.printf("Disconnecting from: %s\n", ssid[relayNumber]);
-      WiFi.mode(WIFI_OFF);
-      relayNumber = abs(relayNumber - 1);
-      Serial.printf("Connecting to: %s\n", ssid[relayNumber]);
-      WiFi.mode(WIFI_STA);
-      WiFi.begin(ssid[relayNumber], password[relayNumber]);
-      delay(loopDelay);
-
-      bool checkNow = CheckInternet();
-
-      if (checkNow && lastExternalPingErrorTime[relayNumber] > 0)
-      {
-        lastExternalPingErrorTime[relayNumber] = 0;
-        Serial.printf("Error count reset for relay #%d.\n", relayNumber + 1);
-      }
-
-      if (!checkNow && lastExternalPingErrorTime[relayNumber] == 0)
-      {
-        Serial.printf("Starting error count for relay #%d...\n", relayNumber + 1);
-        lastExternalPingErrorTime[relayNumber] = millis();
-      }
+      fails++;
+      timer = millis() + checkIncrement * fails;
     }
+
+    if (fails == 2)
+      switchRelay(2, false);
+    if (fails > 2)
+      switchRelay(1, false);
   }
-  if (execCount % 12 != 0)
-    delay(loopDelay);
-  execCount++;
+
+  delay(loopDelay);
+  ws.cleanupClients();
   notifyClients(getOutputStates());
 }
