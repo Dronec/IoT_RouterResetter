@@ -232,6 +232,7 @@ String getOutputStates()
   myArray["stats"]["reboots"] = reboots;
   myArray["stats"]["uptime"] = millisToTime(millis());
   myArray["stats"]["ram"] = (int)ESP.getFreeHeap();
+  myArray["stats"]["frag"] = (int)ESP.getHeapFragmentation();
 
   // // sending values
   // myArray["settings"]["currentCamera"] = currentCamera;
