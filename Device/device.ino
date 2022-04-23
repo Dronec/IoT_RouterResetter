@@ -15,7 +15,7 @@
 
 const char *ssid = WIFISSID_2;
 const char *password = WIFIPASS_2;
-const char *softwareVersion = "1.0";
+const char *softwareVersion = "1.01";
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -199,17 +199,38 @@ void notifyClients(String state)
 {
   ws.textAll(state);
 }
+char *millisToTime(unsigned long currentMillis)
+{
+  unsigned long seconds = currentMillis / 1000;
+  unsigned long minutes = seconds / 60;
+  unsigned long hours = minutes / 60;
+  unsigned long days = hours / 24;
+  currentMillis %= 1000;
+  seconds %= 60;
+  minutes %= 60;
+  hours %= 24;
+  static char buffer[50];
+  if (days == 0 && hours == 0 && minutes == 0)
+    sprintf(buffer, "%lu sec ", seconds);
+  else if (days == 0 && hours == 0 && minutes > 0)
+    sprintf(buffer, "%lu min %lu sec ", minutes, seconds);
+  else if (days == 0 && hours > 0)
+    sprintf(buffer, "%lu h %lu m %lu s ", hours, minutes, seconds);
+  else
+    sprintf(buffer, "%lud %luh %lum %lus ", days, hours, minutes, seconds);
+  return buffer;
+}
 String getOutputStates()
 {
   JSONVar myArray;
   // sending stats
   myArray["stats"]["ssid"] = ssid;
   myArray["stats"]["softwareVersion"] = softwareVersion;
-  myArray["stats"]["lastInternetTime"] = (millis() - lastInternetTime) / 1000;
-  myArray["stats"]["nextCheckIn"] = (timer - millis() + loopDelay) / 1000;
+  myArray["stats"]["lastInternetTime"] = millisToTime((millis() - lastInternetTime - loopDelay));
+  myArray["stats"]["nextCheckIn"] = millisToTime((timer - millis() + loopDelay));
   myArray["stats"]["fails"] = fails;
   myArray["stats"]["reboots"] = reboots;
-  myArray["stats"]["uptime"] = millis() / 1000;
+  myArray["stats"]["uptime"] = millisToTime(millis());
   myArray["stats"]["ram"] = (int)ESP.getFreeHeap();
 
   // // sending values
