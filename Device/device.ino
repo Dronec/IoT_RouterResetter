@@ -164,6 +164,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
       case 1:
         timer = timer + checkIncrement * 15;
         break;
+      case 2:
+        CheckInternet();
+        break;
       }
     }
     notifyClients(getOutputStates());
@@ -263,7 +266,7 @@ void setup()
   Serial.printf("%d: Network monitor restarted.\n", millis());
 }
 
-bool CheckInternet()
+void CheckInternet()
 {
 
   http.begin(client, "http://www.msftncsi.com/ncsi.txt");
@@ -279,13 +282,16 @@ bool CheckInternet()
     if (httpCode == HTTP_CODE_OK)
     {
       Serial.println(http.getString());
-      return true;
+      fails = 0;
+      timer = millis() + checkIncrement;
+      lastInternetTime = millis();
     }
   }
   else
   {
     Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-    return false;
+    fails++;
+    timer = millis() + checkIncrement * (fails + 2);
   }
   http.end();
 }
@@ -304,18 +310,7 @@ void loop()
   //
   if (timer < millis())
   {
-    bool checkNow = CheckInternet();
-    if (checkNow)
-    {
-      fails = 0;
-      timer = millis() + checkIncrement;
-      lastInternetTime = millis();
-    }
-    else
-    {
-      fails++;
-      timer = millis() + checkIncrement * (fails + 2);
-    }
+    CheckInternet();
 
     if (fails == 2)
       switchRelay(2, false);
